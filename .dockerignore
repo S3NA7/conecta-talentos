@@ -1,0 +1,21 @@
+# O que NÃO entra na imagem. O .env fica de fora para nenhuma senha ficar gravada na
+# imagem: o docker-compose.yml entrega as variáveis ao container (env_file).
+.env
+.venv/
+.git/
+.gitignore
+.superpowers/
+.claude/
+
+# caches do Python e do pytest
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# os testes rodam na máquina de desenvolvimento, não no container
+tests/
+
+# arquivos do próprio Docker
+Dockerfile
+.dockerignore
+docker-compose.yml

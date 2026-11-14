@@ -1,0 +1,8 @@
+streamlit==1.67.0
+pymongo==4.20.0
+redis==8.1.0
+neo4j==6.4.1
+pyvis==0.3.2
+python-dotenv==1.2.2
+pillow==13.0.0
+pytest==9.2.0

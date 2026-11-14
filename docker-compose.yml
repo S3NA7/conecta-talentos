@@ -1,0 +1,131 @@
+services:
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_dados:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8.2-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_dados:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5.26-community
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j_dados:/data
+    healthcheck:
+      # ${NEO4J_PASSWORD} é trocado pelo Compose (lendo o .env) antes de rodar no container.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD} 'RETURN 1'"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  # Carga inicial: roda uma vez, depois que os três bancos estão saudáveis, e termina.
+  # --se-vazio: se o MongoDB já tem usuários, não apaga nada (os dados sobrevivem a restart).
+  carga:
+    build: .
+    image: conecta-talentos:local
+    command: ["python", "scripts/carga_inicial.py", "--se-vazio"]
+    restart: "no"
+    env_file: .env
+    # dentro da rede do Compose cada banco é achado pelo nome do serviço, não por 127.0.0.1;
+    # o resto (senha do Neo4j, senha da demo, nome do banco) vem do .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      REDIS_URL: redis://redis:6379/0
+      NEO4J_URI: bolt://neo4j:7687
+      # fuso horário do container (sem isto, os horários da tela saem em UTC, 3 h adiantados)
+      TZ: ${TZ:-America/Fortaleza}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  # A aplicação Streamlit. Só sobe depois que a carga terminou com sucesso (código 0).
+  app:
+    build: .
+    image: conecta-talentos:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8501:8501"
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      REDIS_URL: redis://redis:6379/0
+      NEO4J_URI: bolt://neo4j:7687
+      # fuso horário do container (sem isto, os horários da tela saem em UTC, 3 h adiantados)
+      TZ: ${TZ:-America/Fortaleza}
+    depends_on:
+      carga:
+        condition: service_completed_successfully
+    healthcheck:
+      # o Streamlit responde "ok" neste endereço quando está pronto
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # [extra] Ferramentas para olhar os dados por fora. Só sobem com:
+  #   docker compose --profile ferramentas up -d
+  mongo-express:
+    image: mongo-express:1.0.2-20-alpine3.19
+    profiles: ["ferramentas"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017
+      # sem tela de login: a porta só é publicada em 127.0.0.1 (só esta máquina acessa)
+      ME_CONFIG_BASICAUTH: "false"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  redisinsight:
+    image: redis/redisinsight:3.8.0
+    profiles: ["ferramentas"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5540:5540"
+    environment:
+      # já abre com o Redis do Compose cadastrado
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_ALIAS: conecta-talentos
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  mongo_dados:
+  redis_dados:
+  neo4j_dados:
